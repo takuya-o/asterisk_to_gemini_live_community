@@ -1,0 +1,54 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      // https://www.npmjs.com/package/tsx#debugging-method-1-run-tsx-directly-from-vscode
+      {
+        // 開発コンテナでは起動確認のみ可能。
+        // RTC 通話は UDP/12000 の受信が必要なため、この構成では通話確認不可。
+        "name": "テスト",
+        "type": "node",
+        "request": "launch",
+        "envFile": "${workspaceFolder}/.env",
+        "cwd": "${workspaceFolder}",
+        // Debug current file in VSCode
+        "program": "${workspaceFolder}/index.js", //"${file}",
+        //"stopOnEntry": true,
+        /*
+        Open terminal when debugging starts (Optional)
+        Useful to see console.logs
+        */
+        "console": "integratedTerminal",
+        "internalConsoleOptions": "neverOpen", //デバッグ セッション中の [デバッグ コンソール] パネルの表示/非表示を制御
+        //"outputCapture": "std", //LogがDEBUG CONSOLEに出る
+        // Files to exclude from debugger (e.g. call stack)
+        "skipFiles": [
+          // Node.js internal core modules
+          "<node_internals>/**",
+          // Ignore all dependencies (optional)
+          "${workspaceFolder}/node_modules/**",
+        ],
+      },
+    ]
+  },
+  "extensions": {
+    "recommendations": []
+  },
+  "settings": {
+    "chat.tools.terminal.autoApprove": {
+      "/^cd /workspaces/asterisk_to_openai_rt_community && node --check gemini\\.js && node --check rtp\\.js$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^cd /workspaces/asterisk_to_openai_rt_community && node --check gemini\\.js$/": {
+        "approve": true,
+        "matchCommandLine": true
+      }
+    }
+  }
+}

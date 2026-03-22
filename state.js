@@ -4,10 +4,4 @@ const rtpSenders = new Map();
 const rtpReceivers = new Map();
 const cleanupPromises = new Map();
 
-module.exports = {
-  sipMap,
-  extMap,
-  rtpSenders,
-  rtpReceivers,
-  cleanupPromises
-};
+export { sipMap, extMap, rtpSenders, rtpReceivers, cleanupPromises };

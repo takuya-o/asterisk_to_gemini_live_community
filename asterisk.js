@@ -1,9 +1,9 @@
-const ari = require('ari-client');
-const WebSocket = require('ws');
-const { config, logger } = require('./config');
-const { sipMap, extMap, rtpSenders, rtpReceivers, cleanupPromises } = require('./state');
-const { startRTPReceiver, getNextRtpPort, releaseRtpPort } = require('./rtp');
-const { startOpenAIWebSocket } = require('./openai');
+import ari from 'ari-client';
+//import WebSocket from 'ws';
+import { config, logger } from './config.js';
+import { sipMap, extMap, rtpSenders, rtpReceivers, cleanupPromises } from './state.js';
+import { startRTPReceiver, getNextRtpPort, releaseRtpPort } from './rtp.js';
+import { startGeminiWebSocket } from './gemini.js';
 
 let ariClient;
 
@@ -203,7 +203,7 @@ async function initializeAriClient() {
           sipMap.set(channel.id, channelData);
         }
 
-        await startOpenAIWebSocket(channel.id);
+        await startGeminiWebSocket(channel.id);
       } catch (e) {
         logger.error(`Error in SIP channel ${channel.id}: ${e.message}`);
         await cleanupChannel(channel.id);
@@ -225,9 +225,29 @@ async function initializeAriClient() {
           if (e.message.includes('Channel not found')) {
             logger.info(`Channel ${channel.id} already hung up, no cleanup needed`);
             const channelData = sipMap.get(channel.id);
-            if (channelData && channelData.ws && !channelData.wsClosed && typeof channelData.ws.close === 'function') {
-              logger.info(`Closing WebSocket for channel ${channel.id} on StasisEnd`);
-              channelData.ws.close();
+            if (channelData) {
+              const waitUntil = Date.now() + 1000;
+              if (channelData.geminiResponseInProgress && !channelData.geminiResponseDone) {
+                logger.info(`Waiting up to 1 seconds for Gemini response for ${channel.id}`);
+                // Cleanup前に、進行中のGemini応答が完了するまで最大1秒だけ待機する
+                // 最新状態はsipMapから再取得する
+                while (Date.now() < waitUntil && !channelData.geminiResponseDone) {
+                  await new Promise(resolve => setTimeout(resolve, 100));
+
+                  const updated = sipMap.get(channel.id);
+                  if (!updated) break;
+                  channelData.geminiResponseDone = updated.geminiResponseDone || false;
+                }
+                if (channelData.geminiResponseDone) {
+                  logger.info(`Gemini response completed for ${channel.id} before cleanup`);
+                } else {
+                  logger.info(`Timeout waiting for Gemini response for ${channel.id}`);
+                }
+              }
+              if (channelData.ws && !channelData.wsClosed && typeof channelData.ws.close === 'function') {
+                logger.info(`Closing WebSocket for channel ${channel.id} on StasisEnd`);
+                channelData.ws.close();
+              }
             }
             await cleanupChannel(channel.id);
           } else {
@@ -262,4 +282,4 @@ async function initializeAriClient() {
   }
 }
 
-module.exports = { initializeAriClient, ariClient };
+export { initializeAriClient, ariClient };

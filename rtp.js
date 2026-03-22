@@ -1,9 +1,33 @@
-const dgram = require('dgram');
-const { EventEmitter } = require('events');
-const { config, logger } = require('./config');
-const { sipMap, rtpSenders, rtpReceivers } = require('./state');
+import dgram from 'dgram';
+import { EventEmitter } from 'events';
+import { config, logger } from './config.js';
+import { sipMap, rtpSenders, rtpReceivers } from './state.js';
 
 logger.info('Loading rtp.js module');
+
+// Convert g711 μ-law to 16-bit PCM
+function ulawToPCM(ulawBuffer) {
+  const pcmBuffer = Buffer.alloc(ulawBuffer.length * 2);
+  const BIAS = 0x84;
+
+  for (let i = 0; i < ulawBuffer.length; i++) {
+    const ulaw = ulawBuffer[i] ^ 0xFF;
+    const sign = (ulaw & 0x80) ? -1 : 1;
+    const exponent = (ulaw >> 4) & 0x07;
+    const mantissa = ulaw & 0x0F;
+
+    let decoded = ((mantissa << 3) + BIAS) << exponent;
+    decoded -= BIAS;
+    decoded = sign * decoded;
+
+    if (decoded > 32767) decoded = 32767;
+    if (decoded < -32768) decoded = -32768;
+
+    pcmBuffer.writeInt16LE(decoded, i * 2);
+  }
+
+  return pcmBuffer;
+}
 
 const usedRtpPorts = new Set();
 const rtpEvents = new EventEmitter();
@@ -25,6 +49,22 @@ function releaseRtpPort(port) {
   usedRtpPorts.delete(port);
 }
 
+const rtpStats = new Map();
+
+function recordRtpLog(channelId, shortMsg) {
+  const stats = rtpStats.get(channelId) || { count: 0, lastLogged: 0 };
+  stats.count += 1;
+  const now = Date.now();
+  if (process.env.DEBUG_RTP === 'true') {
+    logger.info(`${shortMsg} (packet#${stats.count})`);
+  } else if (stats.count % 30 === 0 || now - stats.lastLogged > 3000) {
+    logger.info(`${shortMsg} (summarized after ${stats.count} packets)`);
+    stats.lastLogged = now;
+    stats.count = 0;
+  }
+  rtpStats.set(channelId, stats);
+}
+
 function startRTPReceiver(channelId, port) {
   const rtpReceiver = dgram.createSocket('udp4');
   rtpReceiver.isOpen = true;
@@ -32,16 +72,58 @@ function startRTPReceiver(channelId, port) {
 
   rtpReceiver.on('listening', () => logger.info(`RTP Receiver for ${channelId} listening on 127.0.0.1:${port}`));
   rtpReceiver.on('message', (msg, rinfo) => {
+    recordRtpLog(channelId, `RTP packet received ${msg.length} bytes from ${rinfo.address}:${rinfo.port}`);
     const channelData = sipMap.get(channelId);
-    if (channelData && !channelData.rtpSource) {
+    if (!channelData) {
+      logger.warn(`No channelData for ${channelId} when receiving RTP message`);
+      return;
+    }
+    if (!channelData.rtpSource) {
       channelData.rtpSource = { address: rinfo.address, port: rinfo.port };
       sipMap.set(channelId, channelData);
       logger.info(`RTP source assigned for ${channelId}: ${rinfo.address}:${rinfo.port}`);
     }
-    if (channelData && channelData.ws && channelData.ws.readyState === 1) {
-      const muLawData = msg.slice(12);
-      channelData.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: muLawData.toString('base64') }));
+    if (!channelData.ws) {
+      logger.warn(`WebSocket not initialized for ${channelId}`);
+      return;
     }
+    logger.debug(`WebSocket state for ${channelId}: ${channelData.ws.readyState} (1=OPEN, 2=CLOSING, 3=CLOSED)`);
+
+    // 自動VADを利用するので手動の activityStart/activityEnd は不要
+    // ただし必要ならコメントアウトして再度有効化可能
+
+    if (channelData.ws.readyState === 1) {
+      const audioData = msg.slice(12);
+      logger.debug(`Extracted audio data: ${audioData.length} bytes`);
+      const pcmData8k = ulawToPCM(audioData);
+
+      // Upsample 8kHz to 16kHz for Gemini
+      const pcmData16k = Buffer.alloc(pcmData8k.length * 2);
+      for (let i = 0; i < pcmData8k.length / 2; i++) {
+        const sample = pcmData8k.readInt16LE(i * 2);
+        pcmData16k.writeInt16LE(sample, i * 4);
+        pcmData16k.writeInt16LE(sample, i * 4 + 2);
+      }
+
+      logger.debug(`Converted to 16kHz PCM: ${pcmData16k.length} bytes`);
+      try {
+        channelData.ws.send(JSON.stringify({
+          realtimeInput: {
+            mediaChunks: [{
+              mimeType: "audio/pcm;rate=16000", // Gemini音声入力は16KHz
+              data: pcmData16k.toString('base64')
+            }]
+          }
+        }));
+        logger.debug(`Audio sent successfully to Gemini for ${channelId}`);
+      } catch (err) {
+        logger.error(`Error sending audio to Gemini for ${channelId}: ${err.message}`);
+      }
+    } else {
+      logger.warn(`WebSocket not ready for ${channelId} (state=${channelData.ws.readyState})`);
+    }
+
+    sipMap.set(channelId, channelData);
   });
   rtpReceiver.on('error', (err) => logger.error(`RTP Receiver error for ${channelId}: ${err.message}`));
   rtpReceiver.bind(port, '127.0.0.1');
@@ -120,7 +202,7 @@ async function streamAudio(channelId, rtpSource) {
 
   function stopPlayback() {
     if (intervalId) {
-      clearInterval(intervalId);
+      clearTimeout(intervalId);
       intervalId = null;
     }
     packetQueue = [];
@@ -132,10 +214,11 @@ async function streamAudio(channelId, rtpSource) {
       return;
     }
 
-    let isFirstPacketAfterResume = !intervalId;
-    intervalId = setInterval(() => {
+    let isFirstPacketAfterResume = true;
+    let nextPacketTime = Date.now() + 20;
+
+    const tick = () => {
       if (packetQueue.length === 0) {
-        clearInterval(intervalId);
         intervalId = null;
         logger.info(`Finished sending delta buffer for ${channelId}, total packets: ${totalPacketsSent}, queue size: ${packetQueue.length}`);
         rtpEvents.emit('audioFinished', channelId);
@@ -144,7 +227,6 @@ async function streamAudio(channelId, rtpSource) {
 
       if (!sipMap.has(channelId) || isSocketClosed) {
         logger.info(`Channel ${channelId} gone or socket closed, emitting audioFinished, queue size: ${packetQueue.length}`);
-        clearInterval(intervalId);
         intervalId = null;
         rtpEvents.emit('audioFinished', channelId);
         return;
@@ -191,14 +273,26 @@ async function streamAudio(channelId, rtpSource) {
       if (processingTime > 5) {
         logger.warn(`High processing time for packet ${totalPacketsSent}: ${processingTime}ms`);
       }
-    }, 20);
+
+      const now = Date.now();
+      nextPacketTime += 20;
+      if (now > nextPacketTime + 100) {
+        // We are too far behind, reset the clock to avoid sending a burst
+        nextPacketTime = now + 20;
+      }
+      let delay = nextPacketTime - now;
+      if (delay < 0) delay = 0;
+      intervalId = setTimeout(tick, delay);
+    };
+
+    intervalId = setTimeout(tick, 20);
   }
 
   function endStream() {
     const avgPtime = ptimeStats.count > 0 ? (ptimeStats.sum / ptimeStats.count).toFixed(2) : 'N/A';
     logger.info(`RTP stream ended for ${channelId}, total packets sent: ${totalPacketsSent}, total bytes: ${totalBytesSent}, final buffer: ${audioBuffer.length} bytes, avg ptime: ${avgPtime}ms`);
     if (intervalId) {
-      clearInterval(intervalId);
+      clearTimeout(intervalId);
       intervalId = null;
     }
     if (!isSocketClosed) {
@@ -218,4 +312,4 @@ async function streamAudio(channelId, rtpSource) {
   };
 }
 
-module.exports = { startRTPReceiver, getNextRtpPort, releaseRtpPort, streamAudio, rtpEvents };
+export { startRTPReceiver, getNextRtpPort, releaseRtpPort, streamAudio, rtpEvents };

@@ -1,11 +1,22 @@
-# Asterisk to OpenAI Realtime Community Edition
+# Asterisk to Gemini Realtime Community Edition
 
-Welcome! This Node.js application integrates Asterisk 22 with the OpenAI Realtime API to provide a voice-based virtual assistant for SIP calls. It processes audio in real-time and displays user and assistant transcriptions in the console.
+> **⚠️ Disclaimer**
+> 
+> This repository is a fork of the original [asterisk_to_openai_rt_community](https://github.com/infinitocloud/asterisk_to_openai_rt_community), modified to use the **Gemini API** instead of the **OpenAI API**.
+> 
+> **Known Issues**:
+> The Gemini integration part of this program was created using **GitHub Copilot**, and currently has the following issues:
+> - **Distorted Audio**: The output sound is cracking/distorted (static noise).
+> - **Poor Conversation Tempo**: Smooth, natural conversation flow is not possible (issues with response latency or flow).
+> 
+> Please be aware of these issues before using or contributing to the project.
+
+Welcome! This Node.js application integrates Asterisk 22 with the Gemini API to provide a voice-based virtual assistant for SIP calls. It processes audio in real-time and displays user and assistant transcriptions in the console.
 
 ---
 
 ## Features
-- Real-time audio processing with Asterisk and OpenAI.
+- Real-time audio processing with Asterisk and Gemini.
 - Console transcriptions for user and assistant speech.
 - Clean resource management (channels, bridges, WebSocket, RTP).
 - Configurable via `config.conf` (e.g., API key, prompt).
@@ -17,8 +28,8 @@ Welcome! This Node.js application integrates Asterisk 22 with the OpenAI Realtim
 |---------------|---------------------------------------------|
 | OS            | Ubuntu 24.04 LTS                            |
 | Software      | - Node.js v18.20.8+ (`node -v`)<br>- Asterisk 22 with ARI enabled (`http.conf`, `ari.conf`)<br>- Node dependencies: `ari-client`, `ws`, `uuid`, `winston`, `chalk`, `dotenv` |
-| Network       | - Ports: 8088 (ARI), 12000+ (RTP)<br>- Access to `wss://api.openai.com/v1/realtime` |
-| Credentials   | - OpenAI API key (`OPENAI_API_KEY`)<br>- ARI credentials (`asterisk`/`asterisk`) |
+| Network       | - Ports: 8088 (ARI), 12000+ (RTP)<br>- Access to Gemini Websocket API `wss://generativelanguage.googleapis.com/...` |
+| Credentials   | - Gemini API key (`GEMINI_API_KEY`)<br>- ARI credentials (`asterisk`/`asterisk`) |
 
 ---
 
@@ -115,9 +126,9 @@ Welcome! This Node.js application integrates Asterisk 22 with the OpenAI Realtim
    cd asterisk_to_openai_rt_community
    npm install
    ```
-4. Edit `config.conf` in the project root and add your `OPENAI_API_KEY` in the designated field:
+4. Edit `config.conf` in the project root and add your `GEMINI_API_KEY` in the designated field:
    ```plaintext
-   OPENAI_API_KEY=
+   GEMINI_API_KEY=
    ```
 5. Run the application:
    ```bash
@@ -131,15 +142,15 @@ Welcome! This Node.js application integrates Asterisk 22 with the OpenAI Realtim
 2. Interact with the assistant (e.g., say "Hi, What is your name?").
 3. Check console for transcriptions:
    ```
-   O-0005 | 2025-06-28T04:15:01.924Z [INFO] [OpenAI] Assistant transcription: Hello! I'm Sofia...
-   O-0010 | 2025-06-28T04:15:08.045Z [INFO] [OpenAI] User command transcription: What is your name?
+   O-0005 | 2025-06-28T04:15:01.924Z [INFO] [Gemini] Assistant transcription: Hello! I'm Sofia...
+   O-0010 | 2025-06-28T04:15:08.045Z [INFO] [Gemini] User command transcription: What is your name?
    ```
 4. End the call or press `Ctrl+C` to stop.
 
 ---
 
 ## Troubleshooting
-- Error: `OPENAI_API_KEY is missing`: Verify `OPENAI_API_KEY` in `config.conf`.
+- Error: `GEMINI_API_KEY is missing`: Verify `GEMINI_API_KEY` in `config.conf`.
 - Error: `ARI connection error`: Check Asterisk (`sudo systemctl status asterisk`, port 8088). Run: sudo asterisk -rx "ari show status"
 - No transcriptions: Set `LOG_LEVEL=debug` in `config.conf`.
 - Debug commands:

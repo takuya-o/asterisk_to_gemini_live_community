@@ -1,5 +1,5 @@
-const { initializeAriClient } = require('./asterisk');
-const { config, logger } = require('./config');
+import { initializeAriClient } from './asterisk.js';
+import { logger } from './config.js';
 
 async function startApplication() {
   try {
