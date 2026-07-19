@@ -59,7 +59,7 @@ function startRTPReceiver(channelId, port) {
     logger.info(`[Recording]   PCM16k: ${pcmFile}`);
   }
 
-  rtpReceiver.on('listening', () => logger.info(`RTP Receiver for ${channelId} listening on 127.0.0.1:${port}`));
+  rtpReceiver.on('listening', () => logger.info(`RTP Receiver for ${channelId} listening on 0.0.0.0:${port}`));
   rtpReceiver.on('message', (msg, rinfo) => {
     const channelData = sipMap.get(channelId);
     if (channelData && !channelData.rtpSource) {
@@ -88,10 +88,16 @@ function startRTPReceiver(channelId, port) {
 
         const message = {
           realtimeInput: {
-            mediaChunks: [{
-              mimeType: 'audio/pcm;rate=16000',
-              data: pcm16k.toString('base64')
-            }]
+            // https://ai.google.dev/gemini-api/docs/live-api/get-started-websocket?hl=ja#sending_audio
+            audio: {
+              data: pcm16k.toString('base64'),
+              mimeType: 'audio/pcm;rate=16000'
+            }
+            // Old Style 
+            // mediaChunks: [{
+            //   mimeType: 'audio/pcm;rate=16000',
+            //   data: pcm16k.toString('base64')
+            // }]
           }
         };
         logger.debug(`[RTP→Gemini] Sending audio: μ-law ${muLawData.length} bytes → PCM ${pcm16k.length} bytes, base64 length: ${pcm16k.toString('base64').length} for ${channelId}`);
@@ -130,7 +136,7 @@ function startRTPReceiver(channelId, port) {
     }
   });
 
-  rtpReceiver.bind(port, '127.0.0.1');
+  rtpReceiver.bind(port, '0.0.0.0');
 }
 
 function buildRTPHeader(seq, timestamp, ssrc) {
@@ -183,14 +189,14 @@ async function streamAudio(channelId, rtpSource) {
     return true;
   }
 
-  function sendAudioChunk(audioData, provider = 'gemini') {
+  function sendAudioChunk(audioData, provider = 'gemini', sampleRate = 16000) {
     if (!sipMap.has(channelId) || isSocketClosed) {
       logger.info(`Cannot process audio chunk for ${channelId}: channel gone or socket closed`);
       return;
     }
 
-    // Gemini sends PCM 24kHz → convert to μ-law 8kHz
-    const mulawData = convertGeminiToAsterisk(audioData);
+    // Gemini sends PCM (rate may vary, commonly 16000) → convert to μ-law 8kHz
+    const mulawData = convertGeminiToAsterisk(audioData, sampleRate);
 
     // Add silence padding for first chunk
     let packetBuffer = mulawData;

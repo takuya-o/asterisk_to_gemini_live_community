@@ -1,5 +1,7 @@
 const winston = require('winston');
-const chalk = require('chalk');
+// Support both CommonJS require() and ESM interop (chalk@5+ may export default)
+const _chalk = require('chalk');
+const chalk = _chalk && _chalk.default ? _chalk.default : _chalk;
 
 // Determine AI provider from environment variable
 const AI_PROVIDER = process.env.AI_PROVIDER || 'openai'; // Default to openai
@@ -44,7 +46,8 @@ const geminiConfig = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_URL: `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`,
   GEMINI_MODEL: process.env.GEMINI_MODEL || 'models/gemini-2.0-flash-exp',
-  GEMINI_VOICE: process.env.GEMINI_VOICE || 'Puck'
+  GEMINI_VOICE: process.env.GEMINI_VOICE || 'Puck',
+  GEMINI_LANGUAGE: process.env.GEMINI_LANGUAGE || 'en-US',
 };
 
 // Merge configurations based on provider
@@ -63,7 +66,8 @@ console.log('Loaded configuration:', {
   LOG_LEVEL: config.LOG_LEVEL,
   SYSTEM_PROMPT: config.SYSTEM_PROMPT ? 'set' : 'unset',
   MODEL: config.GEMINI_MODEL || 'OpenAI Realtime',
-  VOICE: config.GEMINI_VOICE || config.OPENAI_VOICE
+  VOICE: config.GEMINI_VOICE || config.OPENAI_VOICE,
+  LANGUAGE: config.GEMINI_LANGUAGE || 'en-US'
 });
 
 // Logger configuration
@@ -124,6 +128,7 @@ if (AI_PROVIDER === 'openai') {
   logger.info('GEMINI_API_KEY loaded successfully');
   logger.info(`Using Gemini model: ${config.GEMINI_MODEL}`);
   logger.info(`Using Gemini voice: ${config.GEMINI_VOICE}`);
+  logger.info(`Using Gemini language: ${config.GEMINI_LANGUAGE}`);
 }
 
 // Provider-specific logging helpers

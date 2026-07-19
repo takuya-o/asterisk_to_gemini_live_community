@@ -159,13 +159,22 @@ function convertAsteriskToGemini(mulawData) {
 }
 
 /**
- * Full conversion pipeline: PCM 24kHz → μ-law 8kHz
+ * Full conversion pipeline: PCM (variable rate) → μ-law 8kHz
  * (For sending Gemini audio to Asterisk)
- * @param {Buffer} pcm24k - 16-bit PCM audio at 24kHz
+ * @param {Buffer} pcmBuffer - 16-bit PCM audio
+ * @param {number} sampleRate - sample rate of pcmBuffer (e.g., 16000 or 24000)
  * @returns {Buffer} - μ-law encoded audio at 8kHz
  */
-function convertGeminiToAsterisk(pcm24k) {
-  const pcm8k = resample24to8(pcm24k);
+function convertGeminiToAsterisk(pcmBuffer, sampleRate = 16000) {
+  let pcm8k;
+  if (sampleRate === 16000) {
+    pcm8k = resample16to8(pcmBuffer);
+  } else if (sampleRate === 24000) {
+    pcm8k = resample24to8(pcmBuffer);
+  } else {
+    // Fallback: assume 16kHz if unknown
+    pcm8k = resample16to8(pcmBuffer);
+  }
   const mulaw = pcm16ToMulaw(pcm8k);
   return mulaw;
 }

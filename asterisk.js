@@ -17,6 +17,33 @@ if (config.AI_PROVIDER === 'gemini') {
 }
 
 let ariClient;
+const CONGESTION_SOUND = 'sound:vm-goodbye'; //'sound:congestion';
+// https://docs.asterisk.org/Configuration/Miscellaneous/Hangup-Cause-Mappings/
+const CONGESTION_CAUSE = 34;  // No circuit/channel available
+const CONGESTION_DELAY_MS = 3000;
+
+async function playCongestionTone(channelId) {
+  if (!ariClient) return;
+  try {
+    await ariClient.channels.play({ channelId, media: CONGESTION_SOUND });
+  } catch (e) {
+    logger.warn(`Unable to play congestion tone for ${channelId}: ${e.message}`);
+  }
+  await new Promise((resolve) => setTimeout(resolve, CONGESTION_DELAY_MS));
+}
+
+async function hangupChannelWithCause(channelId, cause = CONGESTION_CAUSE) {
+  if (!ariClient) return;
+  await ariClient.channels.hangup({ channelId, cause });
+}
+
+async function hangupChannelWithCongestion(channel) {
+  if (!channel || !ariClient) return;
+  const channelId = typeof channel === 'string' ? channel : channel.id;
+  if (!channelId) return;
+  await playCongestionTone(channelId);
+  await hangupChannelWithCause(channelId);
+}
 
 async function addExtToBridge(client, channel, bridgeId) {
   try {
@@ -71,6 +98,7 @@ async function cleanupChannel(channelId) {
         try {
           await ariClient.channels.get({ channelId: channelData.localChannelId });
           await ariClient.channels.hangup({ channelId: channelData.localChannelId });
+          // await hangupChannelWithCongestion(channelData.localChannelId);
           logger.info(`Local channel ${channelData.localChannelId} hung up during cleanup`);
         } catch (e) {
           if (e.message.includes('Channel not found') || e.message.includes('Channel not in Stasis')) {
@@ -84,6 +112,7 @@ async function cleanupChannel(channelId) {
         try {
           await ariClient.channels.get({ channelId: channelData.channel.id });
           await channelData.channel.hangup();
+          //await hangupChannelWithCongestion(channelData.channel);
           logger.info(`Channel ${channelId} hung up`);
         } catch (e) {
           if (e.message.includes('Channel not found') || e.message.includes('Channel not in Stasis')) {
@@ -187,7 +216,7 @@ async function initializeAriClient() {
         await startRTPReceiver(channel.id, port);
         const extParams = {
           app: config.ARI_APP,
-          external_host: `127.0.0.1:${port}`,
+          external_host: `127.0.0.1:${port}`, //TODO: 外部からの接続もできるようにする場合はconfig.EXTERNAL_HOSTを使うようにする
           format: 'ulaw',
           transport: 'udp',
           encapsulation: 'rtp',
@@ -203,12 +232,12 @@ async function initializeAriClient() {
         if (config.CALL_DURATION_LIMIT_SECONDS > 0) {
           const channelData = sipMap.get(channel.id);
           channelData.callTimeoutId = setTimeout(async () => {
-            logger.info(`Call duration limit of ${config.CALL_DURATION_LIMIT_SECONDS} seconds reached for channel ${channel.id}, hanging up`);
+            logger.info(`Call duration limit of ${config.CALL_DURATION_LIMIT_SECONDS} seconds reached for channel ${channel.id}, disconnecting with congestion`);
             try {
-              await ariClient.channels.hangup({ channelId: channel.id });
-              logger.info(`Channel ${channel.id} hung up due to duration limit`);
+              await hangupChannelWithCongestion(channel.id);
+              logger.info(`Channel ${channel.id} disconnected due to duration limit`);
             } catch (e) {
-              logger.error(`Error hanging up channel ${channel.id} due to duration limit: ${e.message}`);
+              logger.error(`Error disconnecting channel ${channel.id} due to duration limit: ${e.message}`);
             }
           }, config.CALL_DURATION_LIMIT_SECONDS * 1000);
           sipMap.set(channel.id, channelData);

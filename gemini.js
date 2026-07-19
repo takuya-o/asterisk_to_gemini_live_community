@@ -112,20 +112,27 @@ async function startGeminiWebSocket(channelId) {
         // Process response parts
         if (modelTurn && modelTurn.parts) {
           for (const part of modelTurn.parts) {
-            // Handle audio data
+            // Handle audio data (inline PCM). Parse mimeType to detect sample rate.
             if (part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.startsWith('audio/pcm')) {
               const base64Audio = part.inlineData.data;
-              const pcm24kBuffer = Buffer.from(base64Audio, 'base64');
+              const pcmBuffer = Buffer.from(base64Audio, 'base64');
 
-              totalDeltaBytes += pcm24kBuffer.length;
+              // Extract sample rate if provided (e.g. 'audio/pcm;rate=16000')
+              let sampleRate = 16000;
+              const rateMatch = part.inlineData.mimeType.match(/rate=(\d+)/i);
+              if (rateMatch) {
+                sampleRate = parseInt(rateMatch[1], 10);
+              }
+
+              totalDeltaBytes += pcmBuffer.length;
               channelData.totalDeltaBytes = totalDeltaBytes;
               sipMap.set(channelId, channelData);
 
-              logAI(`Received PCM audio: ${pcm24kBuffer.length} bytes at 24kHz for ${channelId}, total: ${totalDeltaBytes} bytes`, 'info');
+              logAI(`Received PCM audio: ${pcmBuffer.length} bytes at ${sampleRate}Hz for ${channelId}, total: ${totalDeltaBytes} bytes`, 'info');
 
-              // Audio conversion handled in RTP module
+              // Audio conversion handled in RTP module; pass sample rate
               if (sipMap.has(channelId) && streamHandler) {
-                streamHandler.sendAudioChunk(pcm24kBuffer, 'gemini');
+                streamHandler.sendAudioChunk(pcmBuffer, 'gemini', sampleRate);
               }
             }
 
@@ -167,8 +174,8 @@ async function startGeminiWebSocket(channelId) {
       const messageTypes = Object.keys(response);
       const unknownTypes = messageTypes.filter(t => !knownTypes.includes(t));
       if (unknownTypes.length > 0) {
-        logger.debug(`[Gemini] Unknown message types for ${channelId}: ${unknownTypes.join(', ')}`);
-        logger.debug(`[Gemini] Full unknown message: ${JSON.stringify(response)}`);
+        logger.warn(`[Gemini] Unknown message types for ${channelId}: ${unknownTypes.join(', ')}`);
+        logger.warn(`[Gemini] Full unknown message: ${JSON.stringify(response)}`);
       }
 
       // Log if no message types matched
@@ -183,7 +190,7 @@ async function startGeminiWebSocket(channelId) {
 
   const connectWebSocket = () => {
     return new Promise((resolve, reject) => {
-      // Construct WebSocket URL with API key
+      // Construct WebSocket URL with API key as query parameter (legacy behavior)
       const geminiUrl = `${config.GEMINI_URL}?key=${GEMINI_API_KEY}`;
       ws = new WebSocket(geminiUrl);
 
@@ -195,13 +202,14 @@ async function startGeminiWebSocket(channelId) {
           setup: {
             model: config.GEMINI_MODEL,
             generationConfig: {
-              responseModalities: 'audio',
+              responseModalities: ['audio'],
               speechConfig: {
                 voiceConfig: {
                   prebuiltVoiceConfig: {
                     voiceName: config.GEMINI_VOICE
                   }
-                }
+                },
+                languageCode: config.GEMINI_LANGUAGE,
               }
             },
             systemInstruction: {
@@ -296,8 +304,9 @@ async function startGeminiWebSocket(channelId) {
         }
       });
 
-      const handleClose = () => {
-        logger.info(`Gemini WebSocket closed for ${channelId}`);
+      const handleClose = (code, reason) => {
+        const reasonText = reason ? reason.toString() : '';
+        logger.info(`Gemini WebSocket closed for ${channelId} (code=${code}, reason=${reasonText})`);
         channelData.wsClosed = true;
         channelData.ws = null;
         sipMap.set(channelId, channelData);
@@ -309,6 +318,14 @@ async function startGeminiWebSocket(channelId) {
         }
       };
       ws.on('close', handleClose);
+
+      ws.on('unexpected-response', (req, res) => {
+        try {
+          logger.error(`Gemini unexpected response for ${channelId}: statusCode=${res.statusCode}`);
+        } catch (e) {
+          logger.error(`Error logging unexpected-response for ${channelId}: ${e.message}`);
+        }
+      });
     });
   };
 

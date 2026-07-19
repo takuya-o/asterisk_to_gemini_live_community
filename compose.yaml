@@ -1,0 +1,20 @@
+services:
+  app:
+    image: node:24-trixie
+    container_name: asterisk-openai-gemini
+    working_dir: /app
+    command: >
+      sh -c "npm ci && node index.js"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      ARI_URL: ${ARI_URL:-http://host.docker.internal:8088}
+      ARI_USERNAME: ${ARI_USERNAME:-asterisk}
+      ARI_PASSWORD: ${ARI_PASSWORD:-asterisk}
+    volumes:
+      - ./:/app
+      - ./recordings:/app/recordings
+    network_mode: host
+    restart: unless-stopped
